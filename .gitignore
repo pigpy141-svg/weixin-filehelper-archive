@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# All private runtime data. Nothing under local/ should ever be uploaded.
+/local/*
+!/local/.gitkeep
+
+# Local third-party dependency cloned by scripts/setup.ps1
+/tools/WeChatDataAnalysis/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.lnk
