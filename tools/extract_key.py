@@ -5,23 +5,36 @@ Read-only memory inspection is used to obtain the key while WeChat is logged in.
 The result is written only to the local path in your config file.
 """
 import argparse
+import ctypes
 import datetime
+import importlib
 import json
 import os
 import sys
+from ctypes import wintypes
 from pathlib import Path
 
 import pymem
 
+# 第三方 root 版 key_v4.py 使用 ctypes.LPVOID；标准库中该名称位于 ctypes.wintypes。
+if not hasattr(ctypes, "LPVOID"):
+    ctypes.LPVOID = wintypes.LPVOID
+
 ROOT = Path(__file__).resolve().parents[1]
 THIRD_PARTY = ROOT / "tools" / "WeChatDataAnalysis"
+WDA_COMMIT = "36d1e548172e9fb87f26d729403a058d13d92bca"
 
 
 def load_dependency(name):
     if not THIRD_PARTY.is_dir():
-        raise SystemExit("缺少 tools/WeChatDataAnalysis，请按 README 先克隆第三方依赖。")
-    sys.path.insert(0, str(THIRD_PARTY))
-    return __import__(name)
+        raise SystemExit("缺少 tools/WeChatDataAnalysis，请重新运行 scripts/setup.ps1。")
+    candidates = []
+    for base in (THIRD_PARTY / "src", THIRD_PARTY):
+        if base.is_dir() and str(base) not in sys.path:
+            candidates.append(base)
+    sys.path[:0] = [str(p) for p in candidates]
+    module = importlib.import_module(name)
+    return module
 
 
 def expand(value):
@@ -34,6 +47,7 @@ def default_dll():
         Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Tencent" / "Weixin",
     ]
     found = [p for root in roots for p in root.glob("*/Weixin.dll") if p.is_file()]
+    found.extend(p for root in roots for p in root.glob("Weixin.dll") if p.is_file())
     if not found:
         raise FileNotFoundError("找不到 Weixin.dll，请在 config.json 中配置 dll_path")
     return max(found, key=lambda p: p.stat().st_mtime)
@@ -67,7 +81,7 @@ def main():
     dll_path = expand(config["dll_path"]) if config.get("dll_path") else default_dll()
 
     key_v4 = load_dependency("key_v4")
-    dll_scan = load_dependency("dll_key_scan")
+    dll_scan = load_dependency("wechat_decrypt_tool.dll_key_scan")
     probe = choose_probe(account_dir)
     if not probe:
         raise SystemExit("找不到可用数据库，请确认 account_dir 是否指向账号目录。")

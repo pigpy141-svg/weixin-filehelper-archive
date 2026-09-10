@@ -54,6 +54,8 @@ scripts\setup.ps1
 https://github.com/LifeArchiveProject/WeChatDataAnalysis
 ```
 
+安装脚本会自动切到已验证的固定提交 `36d1e548172e9fb87f26d729403a058d13d92bca`，避免上游改动导致路径不兼容。
+
 然后编辑 `local/config.json`：
 
 ```json
