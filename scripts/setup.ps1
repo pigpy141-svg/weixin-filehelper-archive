@@ -15,5 +15,5 @@ git checkout --detach --force $wdaCommit
 Pop-Location
 if (-not (Test-Path local\config.json)) {
   Copy-Item config.example.json local\config.json
-  Write-Host "Created local\config.json. Edit account_dir, wxid and dll_path, then run scripts\init_baseline.ps1"
+  Write-Host "Created local\config.json. Accounts are auto-discovered; then run scripts\init_baseline.ps1"
 }

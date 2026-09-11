@@ -8,6 +8,8 @@ from urllib.parse import urlparse, parse_qs, unquote, quote
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_PATH = Path(os.environ.get("WECHAT_ARCHIVE_CONFIG", os.path.join(ROOT, "local", "config.json")))
+sys.path.insert(0, ROOT)
+from exporter.lib import accounts as accmod
 
 
 def configured_archive_dir():
@@ -25,74 +27,131 @@ DEFAULT_ARCHIVE_DIR = os.path.join(ROOT, "local", "archive")
 ARCH = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else
                        (configured_archive_dir() or DEFAULT_ARCHIVE_DIR))
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8765
-CHATS = os.path.join(ARCH, "chats")
+ACCOUNT_ROOT = os.path.join(ARCH, "accounts")
+LEGACY_CHAT = "filehelper"
+CHAT_TITLE = "文件传输助手"
 
-def load():
-    idx = {}
-    messages_path = os.path.join(ARCH, "messages.jsonl")
-    if not os.path.exists(messages_path):
-        return idx, [], [], {}
-    with open(messages_path, encoding="utf-8") as f:
-        for line in f:
-            try: r = json.loads(line)
-            except Exception: continue
-            c = r.get("chat")
-            e = idx.setdefault(c, {"chat": c, "title": r.get("chat_title") or c,
-                                   "is_room": r.get("is_room"), "count": 0,
-                                   "first": r.get("create_time") or 0,
-                                   "last": r.get("create_time") or 0})
-            e["count"] += 1
-            ct = r.get("create_time") or 0
-            e["first"] = min(e["first"], ct) if e["first"] else ct
-            e["last"] = max(e["last"], ct)
+
+def account_dirs():
+    root = ARCH
+    if os.path.isdir(ACCOUNT_ROOT):
+        dirs = [p for p in Path(ACCOUNT_ROOT).iterdir() if p.is_dir()]
+    else:
+        dirs = [Path(root)]
+    result = []
+    for d in sorted(dirs, key=lambda x: x.name.lower()):
+        if (d / "messages.jsonl").is_file():
+            result.append(d)
+    legacy = Path(root) / "messages.jsonl"
+    if legacy.is_file() and legacy.parent not in result:
+        result.append(legacy.parent)
+    return result
+
+
+def slug_of_dir(path):
+    path = Path(path)
+    return path.name if Path(ACCOUNT_ROOT) in path.parents else "legacy"
+
+
+def chat_of_slug(slug):
+    return f"filehelper@{slug}"
+
+
+def slug_of_chat(chat):
+    if not chat:
+        return None
+    return chat.split("@", 1)[1] if chat.startswith("filehelper@") else None
+
+
+def load_archive_dir(d):
     recs = []
-    with open(messages_path, encoding="utf-8") as f:
-        for line in f:
-            try: recs.append(json.loads(line))
-            except Exception: pass
+    messages_path = os.path.join(d, "messages.jsonl")
+    if os.path.exists(messages_path):
+        with open(messages_path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    recs.append(json.loads(line))
+                except Exception:
+                    pass
     fav = []
-    fp = os.path.join(ARCH, "favorites.json")
+    fp = os.path.join(d, "favorites.json")
     if os.path.exists(fp):
-        fav = json.load(open(fp, encoding="utf-8"))
+        try:
+            fav = json.load(open(fp, encoding="utf-8"))
+        except Exception:
+            fav = []
     notes = {}
-    notes_path = os.path.join(ARCH, "notes_index.json")
+    notes_path = os.path.join(d, "notes_index.json")
     if os.path.exists(notes_path):
-        notes = json.load(open(notes_path, encoding="utf-8"))
-    return idx, recs, fav, notes
+        try:
+            notes = json.load(open(notes_path, encoding="utf-8"))
+        except Exception:
+            notes = {}
+    return recs, fav, notes
 
-INDEX, RECS, FAV, NOTES = load()
-NOTES_BY_MSG = {(r.get("chat"), r.get("local_id")): r for r in NOTES.values()}
-CONV = sorted(INDEX.values(), key=lambda x: x.get("last", 0), reverse=True)
 
-DECRYPTED_DIR = Path(os.environ.get("WECHAT_DECRYPTED_DIR", os.path.join(ROOT, "local", "decrypted")))
-PROGRESS_FILE = os.path.join(ROOT, "local", "sync_progress.json")
+def load_all():
+    all_recs, all_fav, convs, note_map = [], [], [], {}
+    for d in account_dirs():
+        recs, fav, notes = load_archive_dir(d)
+        slug = slug_of_dir(d)
+        chat = chat_of_slug(slug)
+        title_prefix = "" if slug == "legacy" else f"[{slug}] "
+        if recs:
+            times = [r.get("create_time") or 0 for r in recs]
+            convs.append({"chat": chat, "slug": slug, "dir": str(d),
+                          "title": title_prefix + CHAT_TITLE, "is_room": False,
+                          "count": len(recs), "first": min(times), "last": max(times)})
+        for r in recs:
+            r["account"] = slug
+            r["chat"] = chat
+            r["chat_title"] = title_prefix + CHAT_TITLE
+            m = r.get("media") or {}
+            if isinstance(m, dict):
+                for k, v in list(m.items()):
+                    if isinstance(v, str) and v and "://" not in v:
+                        m[k] = os.path.join("accounts", slug, v).replace("\\", "/")
+                r["media"] = m
+            if r.get("note_ref"):
+                r["note_ref"] = os.path.join("accounts", slug, r["note_ref"]).replace("\\", "/")
+            all_recs.append(r)
+        for key, note in notes.items():
+            note = dict(note)
+            rel_dir = note.get("dir") or ""
+            if rel_dir:
+                note["dir"] = os.path.join("accounts", slug, rel_dir).replace("\\", "/")
+            note["account"] = slug
+            note_map[(chat, note.get("local_id"))] = note
+        for item in fav:
+            item["account"] = slug
+            all_fav.append(item)
+    convs.sort(key=lambda x: x.get("last", 0), reverse=True)
+    all_recs.sort(key=lambda r: (r.get("create_time") or 0, r.get("local_id") or 0))
+    return convs, all_recs, all_fav, note_map
+
+
+INDEX, RECS, FAV, NOTES_BY_MSG = load_all()
+NOTES = NOTES_BY_MSG
+
+PROGRESS_DIR = os.path.join(ROOT, "local", "progress")
+PROGRESS_FILE = os.path.join(PROGRESS_DIR, "viewer.json")
+BG_STATE = {"running": False, "done": False, "updated": 0, "output": "",
+            "started": 0, "returncode": None}
 _NO_WIN = 0x08000000 if os.name == "nt" else 0
 _SP_KW = {"creationflags": _NO_WIN} if os.name == "nt" else {}
 
 
+def reload_data():
+    global INDEX, RECS, FAV, NOTES, NOTES_BY_MSG
+    INDEX, RECS, FAV, NOTES_BY_MSG = load_all()
+    NOTES = NOTES_BY_MSG
+
+
 def load_config():
-    if not CONFIG_PATH.is_file():
-        raise RuntimeError(f"缺少配置文件 {CONFIG_PATH}，请先复制 config.example.json 为 local/config.json")
-    data = json.load(open(CONFIG_PATH, encoding="utf-8"))
-    missing = [k for k in ("account_dir", "wxid", "key_json") if not str(data.get(k) or "").strip()]
-    if missing:
-        raise RuntimeError("config.json 缺少字段: " + ", ".join(missing))
-    account_dir = Path(os.path.expandvars(os.path.expanduser(str(data["account_dir"]))))
-    key_json = Path(os.path.expandvars(os.path.expanduser(str(data["key_json"]))))
-    return {"account_dir": account_dir, "wxid": str(data["wxid"]).strip(), "key_json": key_json}
+    return accmod.load_config(CONFIG_PATH)
 
 
-def _base_argv(cfg, extra=None):
-    DECRYPTED_DIR.mkdir(parents=True, exist_ok=True)
-    argv = [sys.executable, "-u", os.path.join(ROOT, "exporter", "save_new_filehelper.py"),
-            str(DECRYPTED_DIR), ARCH, str(cfg["account_dir"] / "msg"),
-            "--wxid", cfg["wxid"],
-            "--storage", str(cfg["account_dir"] / "db_storage"),
-            "--key-json", str(cfg["key_json"])]
-    return argv + (extra or [])
-
-
-def _run_capture(argv, env, timeout):
+def _run_capture(argv, env, timeout=None):
     p = subprocess.run(argv, cwd=ROOT, env=env,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        timeout=timeout, **_SP_KW)
@@ -103,9 +162,10 @@ def _maybe_refresh_key(env):
     extractor = os.path.join(ROOT, "tools", "extract_key.py")
     if not os.path.isfile(extractor):
         return False
-    r = subprocess.run([sys.executable, "-u", extractor, "--config", str(CONFIG_PATH)],
+    r = subprocess.run([sys.executable, "-u", extractor, "--config", str(CONFIG_PATH),
+                        "--active-only"],
                        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       timeout=120, **_SP_KW)
+                       timeout=180, **_SP_KW)
     return r.returncode == 0
 
 
@@ -114,65 +174,63 @@ def _transcode_workers():
 
 
 def read_progress():
-    try:
-        return json.load(open(PROGRESS_FILE, encoding="utf-8"))
-    except Exception:
-        return None
+    data = {}
+    if os.path.isdir(PROGRESS_DIR):
+        for p in Path(PROGRESS_DIR).glob("*.json"):
+            try:
+                data[p.stem] = json.load(open(p, encoding="utf-8"))
+            except Exception:
+                pass
+    return data
 
 
-def _start_backfill(cfg, env):
+def _start_backfill(env):
     if BG_STATE["running"]:
         return
-    BG_STATE.update(running=True, done=False, updated=0, output="", started=int(time.time()))
+    BG_STATE.update(running=True, done=False, updated=0, output="",
+                    started=int(time.time()), returncode=None)
 
     def worker():
-        argv = _base_argv(cfg, ["--backfill-only"])
-        wenv = dict(env, SYNC_PROGRESS_FILE=PROGRESS_FILE,
-                    TRANSCODE_WORKERS=str(_transcode_workers()))
+        argv = [sys.executable, "-u", os.path.join(ROOT, "exporter", "sync_accounts.py"),
+                "--config", str(CONFIG_PATH), "--active-only",
+                "--backfill-only"]
         try:
-            for p in (PROGRESS_FILE,):
-                try:
-                    if os.path.exists(p): os.remove(p)
-                except OSError: pass
-            r = subprocess.run(argv, cwd=ROOT, env=wenv,
+            r = subprocess.run(argv, cwd=ROOT, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **_SP_KW)
-            try: reload_data()
-            except Exception: pass
+            reload_data()
             BG_STATE.update(running=False, done=True,
                             output=r.stdout.decode("utf-8", "replace")[-2000:],
                             returncode=r.returncode)
         except Exception as ex:
             BG_STATE.update(running=False, done=True, output=str(ex), returncode=1)
-        finally:
-            try:
-                if os.path.exists(PROGRESS_FILE): os.remove(PROGRESS_FILE)
-            except OSError: pass
 
     threading.Thread(target=worker, daemon=True).start()
 
 
 def run_sync():
-    cfg = load_config()
+    config = load_config()
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     before = len(RECS)
-    argv = _base_argv(cfg, ["--fast"])
-    try:
-        code, out = _run_capture(argv, env, timeout=120)
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "快速入库超时（超过120秒），请确认微信已解锁后重试。"}
-    if code != 0 and _maybe_refresh_key(env):
-        try:
-            code, out = _run_capture(argv, env, timeout=120)
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": "快速入库超时。"}
+    result_file = os.path.join(PROGRESS_DIR, "last_sync.json")
+    argv = [sys.executable, "-u", os.path.join(ROOT, "exporter", "sync_accounts.py"),
+            "--config", str(CONFIG_PATH), "--active-only",
+            "--json-result", result_file]
+    os.makedirs(PROGRESS_DIR, exist_ok=True)
+    code, out = _run_capture(argv, env, timeout=300)
+    if code != 0:
+        _maybe_refresh_key(env)
+        code, out = _run_capture(argv, env, timeout=300)
     reload_data()
     added = max(0, len(RECS) - before)
-    _start_backfill(cfg, env)
+    _start_backfill(env)
     return {"ok": code == 0, "added": added, "total": len(RECS),
             "pending_videos": True, "output": out[-2000:]}
 
+def tags_path():
+    return os.path.join(ARCH, "tags.json")
+
 def load_tags():
-    p = os.path.join(ARCH, "tags.json")
+    p = tags_path()
     if os.path.exists(p):
         try:
             d = json.load(open(p, encoding="utf-8"))
@@ -184,7 +242,8 @@ def load_tags():
 TAGS, MEMBERSHIP = load_tags()
 
 def save_tags():
-    p = os.path.join(ARCH, "tags.json")
+    p = tags_path()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"tags": TAGS, "membership": MEMBERSHIP}, f, ensure_ascii=False, indent=2)
@@ -200,24 +259,6 @@ def tag_public():
             counts[i] = counts.get(i, 0) + 1
     alive = {t["id"] for t in TAGS}
     return [dict(t, count=counts.get(t["id"], 0)) for t in TAGS if t["id"] in alive]
-
-
-def fmt_ts(ts):
-    try: return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(ts)))
-    except Exception: return ""
-
-def esc(s):
-    return html.escape(str(s if s is not None else ""))
-
-def media_url(m, kind):
-    if not m: return None
-    p = m.get(kind)
-    if not p: return None
-    return "/media/" + quote(p.replace("\\", "/").lstrip("./"))
-
-def note_media_url(note_dir, rel_path):
-    if not rel_path: return ""
-    return "/media/" + quote(os.path.join(note_dir, rel_path).replace("\\", "/"))
 
 def render_note(record):
     note = record.get("note") or {}
@@ -433,7 +474,7 @@ class H(BaseHTTPRequestHandler):
         elif u.path == "/api/convs":
             arr = [{"chat": e["chat"], "title": e["title"], "is_room": e["is_room"],
                     "count": e["count"], "last": fmt_ts(e["last"]),
-                    "last_ts": e["last"]} for e in CONV]
+                    "last_ts": e["last"]} for e in INDEX]
             self._send(200, "application/json; charset=utf-8", json.dumps(arr, ensure_ascii=False))
         elif u.path == "/api/messages":
             chat = q.get("chat", [""])[0]

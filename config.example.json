@@ -1,7 +1,5 @@
 {
-  "account_dir": "C:/Users/你的用户名/Documents/xwechat_files/wxid_xxxxxxxx",
-  "wxid": "wxid_xxxxxxxx",
-  "key_json": "local/key_result.json",
+  "wechat_files_dir": "C:/Users/你的用户名/Documents/xwechat_files",
   "archive_dir": "local/archive",
   "dll_path": "",
   "port": 8765

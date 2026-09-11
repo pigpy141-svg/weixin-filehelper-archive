@@ -225,16 +225,18 @@ async function postJson(u,o){const r=await fetch(u,{method:'POST',headers:{'Cont
 function itemKey(m){return (m.chat||cur)+'::'+m.local_id;}
 function applyHash(){
   const h=(location.hash||'').replace(/^#\/?/,'');
-  if(!h) return;
-  const [sec, ...rest]=h.split('/');
+  const [sec, ...rest]=h?h.split('/'):[];
   if(sec==='fav'){ setTab('fav'); return; }
   if(sec==='chat' && rest.length){
     const chat=decodeURIComponent(rest.join('/'));
-    if(convs.some(c=>c.chat===chat)) openConv(encodeURIComponent(chat));
+    const c=convs.find(x=>x.chat===chat);
+    if(c){openConv(encodeURIComponent(chat));return;}
   } else if(sec==='search' && rest.length){
     $('q').value=decodeURIComponent(rest.join('/'));
     doContentSearch();
+    return;
   }
+  if(tab==='chat' && !curTag && convs.length) openConv(encodeURIComponent(convs[0].chat));
 }
 document.addEventListener('click',async e=>{
   const el=e.target.closest('[data-open]');
@@ -373,7 +375,7 @@ async function openConv(enc){
     `<span id="bgProgress"><span class="spin"></span><span>后台转码</span><span class="bar"><i></i></span><span class="pct"></span></span>`+
     `${viewSwitchHtml()}`+
     `<button id="multiBtn" onclick="setSelecting(!selecting)" style="float:right;margin-right:14px;border:1px solid var(--green);background:#fff;color:var(--green);border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;${viewMode==='folder'?'':'display:none'}">多选</button>`+
-    `<small>${cur} · ${c?c.count:0} 条</small>`;
+    `<small>${esc(cur)} · ${c?c.count:0} 条</small>`;
   syncViewBtns();
   curMsgs=await get('/api/messages?chat='+enc);
   if(viewMode==='folder'){
