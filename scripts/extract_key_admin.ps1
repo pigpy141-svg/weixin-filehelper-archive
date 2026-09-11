@@ -13,8 +13,8 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   exit
 }
 
-Write-Host "正在提取当前登录微信账号的数据库密钥..."
-Write-Host "请保持微信登录、解锁，并打开文件传输助手。"
+Write-Host "Extracting keys for the currently logged-in WeChat account..."
+Write-Host "Keep WeChat unlocked and open File Transfer Helper."
 .\.venv\Scripts\python.exe tools\extract_key.py --config local\config.json --active-only
 Write-Host ""
-Read-Host "完成后按回车关闭窗口"
+Read-Host "Press Enter to close"

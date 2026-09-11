@@ -21,11 +21,11 @@ $wheel = Get-ChildItem "tools\WeChatDataAnalysis\tools\key_wheels\wx_key-*-win_a
   Where-Object { $_.Name -match $pyTag } |
   Select-Object -First 1
 if (-not $wheel) {
-  throw "找不到与当前 Python $pyTag 匹配的 wx_key wheel，请使用 Windows x64 的 Python 3.10-3.14。"
+  throw "No wx_key wheel for Python $pyTag. Use Windows x64 Python 3.10-3.14."
 }
 .\.venv\Scripts\python.exe -m pip install $wheel.FullName
 
 if (-not (Test-Path local\config.json)) {
   Copy-Item config.example.json local\config.json
-  Write-Host 'Created local\config.json. Accounts are auto-discovered; then run scripts\init_baseline.ps1'
+  Write-Host "Created local\config.json. Run scripts\init_baseline.ps1 next."
 }
