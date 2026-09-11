@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """解析并归档微信 4.x 转发收藏笔记卡片（appmsg type=24，内嵌图文/视频）。"""
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -19,6 +20,8 @@ _SP_KW = {"creationflags": _NO_WIN} if os.name == "nt" else {}
 CODE = 1314233902
 WXID = os.environ.get("WECHAT_WXID", "")
 XOR = CODE & 0xFF
+_NEW_IMAGE_KEYS = None
+_NEW_IMAGE_KEYS_LOADED = False
 
 
 def image_key(wxid):
@@ -34,6 +37,61 @@ def set_wxid(wxid):
 
 KEY = image_key(WXID) if WXID else b""
 IMAGE_MAGIC = b"\x07\x08V2\x08\x07"
+
+
+def image_ext(plain):
+    if plain.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if plain.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if plain.startswith(b"RIFF") and plain[8:12] == b"WEBP":
+        return "webp"
+    if plain.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    return None
+
+
+def load_new_image_keys():
+    """微信 4.1.13+ 图片缓存改用 wx_key 返回的 AES/XOR 密钥。"""
+    global _NEW_IMAGE_KEYS, _NEW_IMAGE_KEYS_LOADED
+    if _NEW_IMAGE_KEYS_LOADED:
+        return _NEW_IMAGE_KEYS
+    _NEW_IMAGE_KEYS_LOADED = True
+    try:
+        import wx_key
+        data = json.loads(wx_key.get_image_key() or "{}")
+    except Exception:
+        return None
+    result = {}
+    for account in data.get("accounts", []):
+        wxid = account.get("wxid")
+        for item in account.get("keys", []):
+            aes = item.get("aesKey")
+            xor_value = item.get("xorKey")
+            if not wxid or not aes or xor_value is None:
+                continue
+            aes_bytes = aes.encode("ascii") if isinstance(aes, str) else bytes(aes)
+            if len(aes_bytes) >= 16 and 0 <= int(xor_value) <= 255:
+                result[wxid] = (aes_bytes[:16], int(xor_value))
+    _NEW_IMAGE_KEYS = result
+    return _NEW_IMAGE_KEYS
+
+
+def decrypt_new_wechat_image(data):
+    if not WXID or len(data) < 15 or data[:6] != IMAGE_MAGIC:
+        return None, None
+    pair = (load_new_image_keys() or {}).get(WXID)
+    if not pair:
+        return None, None
+    aes_key, xor_value = pair
+    _, aes_size, _ = struct.unpack("<6sLLx", data[:15])
+    encrypted = data[15:]
+    padded = aes_size + (-aes_size % 16)
+    head = AES.new(aes_key, AES.MODE_ECB).decrypt(encrypted[:padded])[:aes_size]
+    tail = bytes(value ^ xor_value for value in encrypted[aes_size:])
+    plain = head + tail
+    return plain, image_ext(plain)
+
 TOKEN_RE = re.compile(rb"[0-9a-f]{16}")
 
 TEXT_TYPES = {"1", "2", "3", "5", "6", "7"}
@@ -71,6 +129,9 @@ def decrypt_wechat_image(data, wxid=None):
         return None, None
     if len(data) < 15 or data[:6] != IMAGE_MAGIC:
         return None, None
+    plain, ext = decrypt_new_wechat_image(data)
+    if plain:
+        return plain, ext
     _, aes_size, _ = struct.unpack("<6sLLx", data[:15])
     encrypted = data[15:]
     padded = aes_size + (-aes_size % 16)
@@ -78,15 +139,7 @@ def decrypt_wechat_image(data, wxid=None):
     head = cipher.decrypt(encrypted[:padded])[:aes_size]
     tail = bytes(value ^ XOR for value in encrypted[aes_size:])
     plain = head + tail
-    if plain.startswith(b"\xff\xd8\xff"):
-        return plain, "jpg"
-    if plain.startswith(b"\x89PNG\r\n\x1a\n"):
-        return plain, "png"
-    if plain.startswith(b"RIFF") and plain[8:12] == b"WEBP":
-        return plain, "webp"
-    if plain.startswith((b"GIF87a", b"GIF89a")):
-        return plain, "gif"
-    return None, None
+    return plain, image_ext(plain)
 
 
 def packed_token(packed):
