@@ -11,7 +11,7 @@ if (-not (Test-Path tools\WeChatDataAnalysis\.git)) {
 }
 Push-Location tools\WeChatDataAnalysis
 git fetch --depth 1 origin $wdaCommit
-git checkout --detach $wdaCommit
+git checkout --detach --force $wdaCommit
 Pop-Location
 if (-not (Test-Path local\config.json)) {
   Copy-Item config.example.json local\config.json
