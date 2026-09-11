@@ -27,5 +27,5 @@ if (-not $wheel) {
 
 if (-not (Test-Path local\config.json)) {
   Copy-Item config.example.json local\config.json
-  Write-Host "Created local\config.json. Accounts are auto-discovered; then run scripts\init_baseline.ps1"
+  Write-Host 'Created local\config.json. Accounts are auto-discovered; then run scripts\init_baseline.ps1'
 }
