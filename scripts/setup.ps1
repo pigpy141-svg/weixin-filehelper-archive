@@ -27,10 +27,20 @@ if (-not (Test-Path "$wdaDir\.git")) {
 
 Push-Location $wdaDir
 
-git fetch --depth 1 origin $wdaCommit
+# A full clone normally already contains the pinned commit, so only hit the
+# network when it is genuinely missing.
+git rev-parse --verify --quiet "$wdaCommit^{commit}" | Out-Null
 if ($LASTEXITCODE -ne 0) {
-  Pop-Location
-  throw ("git fetch of WeChatDataAnalysis@" + $wdaCommit + " failed. Check your network or proxy, then re-run scripts\setup.ps1.")
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    git fetch --depth 1 origin $wdaCommit
+    if ($LASTEXITCODE -eq 0) { break }
+    Write-Host "git fetch failed (attempt $attempt of 3)."
+    if ($attempt -eq 3) {
+      Pop-Location
+      throw ("Could not fetch WeChatDataAnalysis@" + $wdaCommit + ". Check your network or proxy, then re-run scripts\setup.ps1.")
+    }
+    Start-Sleep -Seconds 5
+  }
 }
 
 git checkout --detach --force $wdaCommit
