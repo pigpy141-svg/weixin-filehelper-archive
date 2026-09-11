@@ -56,6 +56,13 @@ https://github.com/LifeArchiveProject/WeChatDataAnalysis
 
 安装脚本会自动切到已验证的固定提交 `36d1e548172e9fb87f26d729403a058d13d92bca`，避免上游改动导致路径不兼容。
 
+如果当前网络无法直接访问 GitHub，请先在同一 PowerShell 窗口设置代理，再运行安装脚本，例如：
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+scripts\setup.ps1
+```
+
 然后按需编辑 `local/config.json`。多数情况下可以保持默认：
 
 ```json
