@@ -25,7 +25,7 @@
 ## 运行环境
 
 - Windows 10/11
-- Python 3.10 或更高版本
+- Python 3.10–3.14（Windows x64）
 - 已登录并保持解锁状态的微信 4.x Windows 客户端
 - Git（用于拉取一个第三方密钥分析依赖）
 
@@ -166,8 +166,9 @@ $env:PYTHONIOENCODING = "utf-8"
 ## 第三方组件
 
 - `tools/wechat-decrypt/` 来自第三方 wechat-decrypt 项目，保留其 `LICENSE` 和说明文件。
-- 密钥提取阶段使用 [LifeArchiveProject/WeChatDataAnalysis](https://github.com/LifeArchiveProject/WeChatDataAnalysis) 的部分模块，安装脚本会单独克隆该仓库，不把它的代码复制进本仓库。
-- Python 依赖见 `requirements.txt`。
+- 密钥提取和微信 4.1.13 图片密钥读取使用 [LifeArchiveProject/WeChatDataAnalysis](https://github.com/LifeArchiveProject/WeChatDataAnalysis) 固定提交中的少量模块；安装脚本会单独克隆该仓库，并从其 `tools/key_wheels/` 安装与当前 Python 版本匹配的 `wx_key` wheel。
+- 本仓库不复制、不分发 WeChatDataAnalysis 源码或 `wx_key` 二进制；它们的版权、许可和使用条款由各自上游项目保留。公共使用或再分发前，请自行复核上游许可和当地法律法规。
+- Python 依赖见 `requirements.txt`；密钥和图片缓存解密能力面向 Windows x64。
 
 ## 隐私建议
 
